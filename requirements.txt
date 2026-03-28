@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+streamlit
+requests
+sqlalchemy
+psycopg2-binary
+python-dotenv
+pydantic-settings
+torch
+opencv-python
+numpy
+twilio
+matplotlib
+earthengine-api
+folium
+streamlit-folium
