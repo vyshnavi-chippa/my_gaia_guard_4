@@ -1,51 +1,53 @@
 import os
+
+import folium
 import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
-import folium
 from streamlit_folium import st_folium
-from folium.plugins import HeatMap
-import random
-import time
-import matplotlib.pyplot as plt
 
 load_dotenv()
 
-# =============================
-# UI THEME (GLASSMORPHISM)
-# =============================
-st.set_page_config(page_title="GaiaGuard", page_icon="🌍", layout="centered")
+st.set_page_config(
+    page_title="GaiaGuard",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-st.markdown("""
+st.markdown(
+    """
 <style>
-body {
-    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-}
-.block-container {
-    padding: 2rem;
-}
-div[data-testid="stMetric"] {
-    background: rgba(255,255,255,0.05);
-    border-radius: 15px;
-    padding: 15px;
-    backdrop-filter: blur(10px);
-}
-h1, h2, h3 {
-    color: #00e6e6;
-}
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 2rem;
+        max-width: 100%;
+    }
+    h1 {
+        font-size: 1.75rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+    /* Left control column panel */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(1) div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: linear-gradient(180deg, rgba(15, 32, 39, 0.95) 0%, rgba(32, 58, 67, 0.92) 100%);
+        border: 1px solid rgba(0, 230, 230, 0.25);
+        border-radius: 14px;
+        padding: 1rem 1rem 1.25rem 1rem;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"] label,
+    div[data-testid="stVerticalBlockBorderWrapper"] p,
+    div[data-testid="stVerticalBlockBorderWrapper"] span {
+        color: #e8f4f4 !important;
+    }
 </style>
-""", unsafe_allow_html=True)
-
-st.title("🌍 GaiaGuard - Environmental Monitoring System")
-st.caption("AI-based Geospatial Monitoring + Alerts")
+""",
+    unsafe_allow_html=True,
+)
 
 api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 
-# =============================
-# FETCH DATA
-# =============================
 def fetch_danger_zones():
     try:
         response = requests.get(f"{api_base_url}/danger-zones", timeout=10)
@@ -58,279 +60,195 @@ def fetch_danger_zones():
 if "zones_cache" not in st.session_state:
     st.session_state.zones_cache = fetch_danger_zones()
 
+st.title("🌍 GaiaGuard")
+st.caption("Environmental monitoring & danger zones")
 
-# =============================
-# USER INPUT
-# =============================
-st.subheader("📍 User Location")
+col_left, col_right = st.columns([0.34, 0.66], gap="large")
 
-with st.form("location_form"):
-    user_latitude = st.number_input("Latitude", value=28.6140, format="%.6f")
-    user_longitude = st.number_input("Longitude", value=77.2092, format="%.6f")
-    user_id = st.text_input("User ID", value="default")
-    check_submit = st.form_submit_button("Check Nearby Risks")
-
-
-# =============================
-# GOOGLE EARTH ENGINE → Danger zones
-# =============================
-st.subheader("🛰️ Google Earth Engine")
-st.caption(
-    "Runs NDVI change detection on the server and **adds or updates a danger zone** "
-    "when loss exceeds your threshold. Requires backend `GEE_ENABLED=true` and EE auth."
-)
-
-col_gee_a, col_gee_b = st.columns(2)
-with col_gee_a:
-    if st.button("Sync GEE → database (this location)"):
-        try:
-            r = requests.post(
-                f"{api_base_url}/gee/sync",
-                json={"latitude": user_latitude, "longitude": user_longitude},
-                timeout=120,
+with col_left:
+    with st.container(border=True):
+        st.markdown("### Controls")
+        lat_col, lon_col = st.columns(2, gap="small")
+        with lat_col:
+            user_latitude = st.number_input(
+                "Latitude",
+                value=28.6140,
+                format="%.6f",
+                key="map_lat",
+                label_visibility="visible",
             )
-            r.raise_for_status()
-            body = r.json()
-            if body.get("skipped"):
-                st.warning(f"GEE skipped: {body.get('reason', 'unknown')}")
-            elif body.get("change_detected"):
-                st.success(
-                    f"Change detected. Upserted {body.get('zones_upserted', 0)} zone(s)."
-                )
-            else:
-                st.info("No change above threshold; no new zone written.")
-            if body.get("gee"):
-                st.json(body["gee"])
-            st.session_state.zones_cache = fetch_danger_zones()
-            st.rerun()
-        except Exception as e:
-            st.error(f"GEE sync failed: {e}")
+        with lon_col:
+            user_longitude = st.number_input(
+                "Longitude",
+                value=77.2092,
+                format="%.6f",
+                key="map_lon",
+                label_visibility="visible",
+            )
 
-with col_gee_b:
-    st.markdown(
-        "With **`GEE_ENABLED=true`**, each **Check Nearby Risks** also runs Earth Engine first "
-        "and can **add/update danger zones** when deforestation signal exceeds your threshold. "
-        "Set **`GEE_AUTO_SYNC_ON_LOCATION=false`** in `.env` to skip that (faster)."
-    )
+        user_id = st.text_input("User ID (alerts)", value="default")
 
-
-# =============================
-# LOCATION CHECK → refresh zones + last risk
-# =============================
-if check_submit:
-    try:
-        payload = {
-            "latitude": user_latitude,
-            "longitude": user_longitude,
-            "user_id": user_id.strip() or "default",
-        }
-        response = requests.post(
-            f"{api_base_url}/update-location",
-            json=payload,
-            timeout=120,
+        analyze = st.button(
+            "🔍 Analyze area",
+            type="primary",
+            use_container_width=True,
+            key="analyze_area",
         )
-        response.raise_for_status()
-        st.session_state.last_risk = response.json()
-        st.session_state.zones_cache = fetch_danger_zones()
-    except Exception as exc:
-        st.session_state.pop("last_risk", None)
-        st.error(f"Failed to call backend: {exc}")
+        sync_gee = st.button(
+            "🛰️ Sync satellite (GEE)",
+            use_container_width=True,
+            key="sync_gee",
+        )
+
+        if analyze:
+            try:
+                payload = {
+                    "latitude": user_latitude,
+                    "longitude": user_longitude,
+                    "user_id": user_id.strip() or "default",
+                }
+                response = requests.post(
+                    f"{api_base_url}/update-location",
+                    json=payload,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                st.session_state.last_risk = response.json()
+                st.session_state.zones_cache = fetch_danger_zones()
+                st.success("Analysis complete.")
+            except Exception as exc:
+                st.session_state.pop("last_risk", None)
+                st.error(f"Request failed: {exc}")
+
+        if sync_gee:
+            try:
+                r = requests.post(
+                    f"{api_base_url}/gee/sync",
+                    json={
+                        "latitude": user_latitude,
+                        "longitude": user_longitude,
+                    },
+                    timeout=120,
+                )
+                r.raise_for_status()
+                body = r.json()
+                if body.get("skipped"):
+                    st.warning(f"GEE skipped: {body.get('reason', 'unknown')}")
+                elif body.get("change_detected"):
+                    st.success(
+                        f"Change detected — {body.get('zones_upserted', 0)} zone(s) updated."
+                    )
+                else:
+                    st.info("No zone change above threshold.")
+                st.session_state.zones_cache = fetch_danger_zones()
+                st.rerun()
+            except Exception as e:
+                st.error(f"GEE sync failed: {e}")
+
+        st.caption(
+            f"Zones in DB: **{len(st.session_state.zones_cache[0])}** · "
+            f"`GEE_AUTO_SYNC_ON_LOCATION` runs on **Analyze** when enabled."
+        )
+
+        result = st.session_state.get("last_risk")
+        if result:
+            st.divider()
+            st.markdown("**Last result**")
+            msg = result.get("user_message") or ""
+            risk = result.get("risk_level", "clear")
+            if risk == "inside":
+                st.error(msg)
+            elif risk == "near":
+                st.warning(msg)
+            else:
+                st.success(msg)
+            if result.get("alert_triggered") or result.get("proximity_alert_triggered"):
+                st.caption("Alert path fired — check SMS/logs if configured.")
+            with st.expander("JSON"):
+                st.json(result)
 
 zones, zone_error = st.session_state.zones_cache
 
+with col_right:
+    st.subheader("Map")
+    ulat = float(user_latitude)
+    ulon = float(user_longitude)
+    m = folium.Map(
+        location=[ulat, ulon],
+        zoom_start=12,
+        tiles="OpenStreetMap",
+        control_scale=True,
+    )
 
-# =============================
-# 📡 SYSTEM STATUS (after zone refresh)
-# =============================
-st.markdown(f"""
-### 📡 System Status  
-- Backend: ✅ Connected  
-- Zones loaded: **{len(zones)}**  
-- Last refresh: {pd.Timestamp.now().strftime('%H:%M:%S')}  
-""")
+    folium.Marker(
+        location=[ulat, ulon],
+        popup=folium.Popup(
+            f"<b>Your location</b><br>{ulat:.6f}, {ulon:.6f}",
+            max_width=240,
+        ),
+        tooltip="Your location",
+        icon=folium.Icon(color="blue"),
+    ).add_to(m)
 
+    lats = [ulat]
+    lons = [ulon]
+    if zones:
+        for zone in zones:
+            sev = str(zone["severity"]).lower()
+            color = "green" if sev == "low" else "orange" if sev == "medium" else "red"
+            lat, lon = float(zone["latitude"]), float(zone["longitude"])
+            r = float(zone["radius"])
+            lats.append(lat)
+            lons.append(lon)
+            folium.Circle(
+                location=[lat, lon],
+                radius=r,
+                color=color,
+                weight=2,
+                fill=True,
+                fill_opacity=0.22,
+                popup=folium.Popup(
+                    f"<b>Danger zone</b><br>{sev.upper()} · {r:.0f} m",
+                    max_width=220,
+                ),
+                tooltip=f"{sev.upper()} · {r:.0f} m",
+            ).add_to(m)
 
-# =============================
-# ALERT SYSTEM
-# =============================
-st.subheader("⚠️ Risk & alerts")
+    span_lat = max(lats) - min(lats)
+    span_lon = max(lons) - min(lons)
+    if span_lat > 1e-5 or span_lon > 1e-5:
+        pad_lat = max(0.008, span_lat * 0.15)
+        pad_lon = max(0.008, span_lon * 0.15)
+        m.fit_bounds(
+            [
+                [min(lats) - pad_lat, min(lons) - pad_lon],
+                [max(lats) + pad_lat, max(lons) + pad_lon],
+            ]
+        )
 
-result = st.session_state.get("last_risk")
-if result:
-    st.markdown("### Latest check")
-    msg = result.get("user_message") or ""
-    risk = result.get("risk_level", "clear")
+    _map_key = f"gaia_map_{ulat:.6f}_{ulon:.6f}"
+    st_folium(
+        m,
+        height=420,
+        use_container_width=True,
+        key=_map_key,
+    )
 
-    if risk == "inside":
-        st.error(msg)
-        st.progress(100)
-    elif risk == "near":
-        st.warning(msg)
-        st.progress(70)
+    st.subheader("Danger zone list")
+    if zone_error:
+        st.error(f"Could not load zones: {zone_error}")
+    elif zones:
+        df = pd.DataFrame(
+            [
+                {
+                    "Lat": z["latitude"],
+                    "Lon": z["longitude"],
+                    "Radius (m)": z["radius"],
+                    "Severity": str(z["severity"]).upper(),
+                }
+                for z in zones
+            ]
+        )
+        st.dataframe(df, width="stretch", hide_index=True)
     else:
-        st.success(msg)
-
-    if result.get("alert_triggered"):
-        st.caption(
-            f"In-zone alert: **{result.get('alert_channel')}** "
-            f"({result.get('alert_detail')})"
-        )
-    if result.get("proximity_alert_triggered"):
-        st.caption(
-            f"Proximity alert: **{result.get('proximity_alert_channel')}** "
-            f"({result.get('proximity_alert_detail')})"
-        )
-
-    gee = result.get("gee_sync")
-    if isinstance(gee, dict) and not gee.get("skipped"):
-        if gee.get("error"):
-            st.error(f"Earth Engine step failed: {gee.get('error')}")
-        elif gee.get("change_detected"):
-            st.success(
-                f"🛰️ GEE: change detected — {gee.get('zones_upserted', 0)} zone(s) upserted."
-            )
-        elif gee.get("ok"):
-            st.caption("🛰️ GEE: no new zone above threshold for this location.")
-
-    with st.expander("Full API response"):
-        st.json(result)
-else:
-    st.info("Enter latitude/longitude, then click **Check Nearby Risks**.")
-
-
-# =============================
-# DANGER ZONES TABLE (after check, list matches DB)
-# =============================
-st.subheader("🚨 Danger Zones")
-
-if zone_error:
-    st.error(f"Could not load zones: {zone_error}")
-elif zones:
-    table_rows = [
-        {
-            "Lat": z["latitude"],
-            "Lon": z["longitude"],
-            "Radius (m)": z["radius"],
-            "Severity": str(z["severity"]).upper(),
-        }
-        for z in zones
-    ]
-    st.dataframe(table_rows, width="stretch")
-else:
-    st.info("No danger zones found.")
-
-
-# =============================
-# 🗺️ MAP + LEGEND
-# =============================
-st.subheader("🗺️ Live Danger Map")
-
-st.markdown("""
-### 🧭 Legend
-- 🟢 Low Risk  
-- 🟠 Medium Risk  
-- 🔴 High Risk  
-""")
-
-map_center = [user_latitude, user_longitude]
-
-m = folium.Map(location=map_center, zoom_start=14)
-
-# Satellite layer
-folium.TileLayer(
-    tiles="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-    attr="Google Satellite",
-    name="Satellite",
-    max_zoom=20,
-    subdomains=["mt0", "mt1", "mt2", "mt3"],
-).add_to(m)
-
-folium.LayerControl().add_to(m)
-
-# User marker
-folium.Marker(
-    location=[user_latitude, user_longitude],
-    popup="You are here",
-    icon=folium.Icon(color="blue"),
-).add_to(m)
-
-heat_data = []
-
-if zones:
-    for zone in zones:
-        color = "green"
-        if zone["severity"] == "medium":
-            color = "orange"
-        elif zone["severity"] == "high":
-            color = "red"
-
-        lat = zone["latitude"]
-        lon = zone["longitude"]
-
-        heat_data.append([lat, lon])
-
-        folium.Circle(
-            location=[lat, lon],
-            radius=zone["radius"],
-            color=color,
-            fill=True,
-            fill_opacity=0.3,
-        ).add_to(m)
-
-        folium.Circle(
-            location=[lat, lon],
-            radius=zone["radius"] + random.randint(50, 150),
-            color=color,
-            fill=True,
-            fill_opacity=0.1,
-        ).add_to(m)
-
-if heat_data:
-    HeatMap(heat_data).add_to(m)
-
-st_folium(m, width=700, height=500)
-
-
-# =============================
-# 📊 ANALYTICS
-# =============================
-st.subheader("📈 Zone Severity Distribution")
-
-if zones:
-    severity_counts = {"low": 0, "medium": 0, "high": 0}
-
-    for z in zones:
-        severity_counts[z["severity"]] += 1
-
-    fig, ax = plt.subplots()
-    ax.bar(severity_counts.keys(), severity_counts.values())
-    ax.set_title("Danger Zone Severity")
-    st.pyplot(fig)
-
-
-# =============================
-# 🧠 AI PREDICTION
-# =============================
-st.subheader("🧠 AI Risk Prediction")
-
-if st.button("Predict Future Risk"):
-    predicted_risk = random.choice(["LOW", "MEDIUM", "HIGH"])
-    st.info(f"Predicted Environmental Risk: {predicted_risk}")
-
-
-# =============================
-# 📊 METRICS
-# =============================
-st.subheader("📊 Research Metrics")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric("Model Accuracy", "91%")
-    st.metric("Precision", "0.89")
-
-with col2:
-    st.metric("Recall", "0.87")
-    st.metric("IoU Score", "0.79")
-
-
+        st.info("No danger zones yet. Run **Analyze** or **Sync satellite (GEE)**.")
