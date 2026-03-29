@@ -94,11 +94,6 @@ with col_left:
             use_container_width=True,
             key="analyze_area",
         )
-        sync_gee = st.button(
-            "🛰️ Sync satellite (GEE)",
-            use_container_width=True,
-            key="sync_gee",
-        )
 
         if analyze:
             try:
@@ -119,31 +114,6 @@ with col_left:
             except Exception as exc:
                 st.session_state.pop("last_risk", None)
                 st.error(f"Request failed: {exc}")
-
-        if sync_gee:
-            try:
-                r = requests.post(
-                    f"{api_base_url}/gee/sync",
-                    json={
-                        "latitude": user_latitude,
-                        "longitude": user_longitude,
-                    },
-                    timeout=120,
-                )
-                r.raise_for_status()
-                body = r.json()
-                if body.get("skipped"):
-                    st.warning(f"GEE skipped: {body.get('reason', 'unknown')}")
-                elif body.get("change_detected"):
-                    st.success(
-                        f"Change detected — {body.get('zones_upserted', 0)} zone(s) updated."
-                    )
-                else:
-                    st.info("No zone change above threshold.")
-                st.session_state.zones_cache = fetch_danger_zones()
-                st.rerun()
-            except Exception as e:
-                st.error(f"GEE sync failed: {e}")
 
         st.caption(
             f"Zones in DB: **{len(st.session_state.zones_cache[0])}** · "
@@ -251,4 +221,4 @@ with col_right:
         )
         st.dataframe(df, width="stretch", hide_index=True)
     else:
-        st.info("No danger zones yet. Run **Analyze** or **Sync satellite (GEE)**.")
+        st.info("No danger zones yet. Run **Analyze area**.")

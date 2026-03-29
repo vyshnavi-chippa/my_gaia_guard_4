@@ -1,20 +1,17 @@
 from __future__ import annotations
 """
-Google Earth Engine: NDVI-based vegetation loss heuristic for demo danger zones.
+Google Earth Engine: NDVI-based vegetation loss detection (AUTO + REAL-TIME)
 
-Requires: earthengine-api, Earth Engine enabled project, and local auth:
-  earthengine authenticate
-or service account JSON via GEE_CREDENTIALS_JSON (uses client_email inside file).
+✔ Uses dynamic dates (no hardcoding)
+✔ Uses latest Sentinel-2 dataset
+✔ Handles empty data safely
+✔ Ready for automatic danger zone creation
 """
-
-"""
-Google Earth Engine: NDVI-based vegetation loss heuristic for demo danger zones.
-"""
-
 
 import json
 import logging
 from pathlib import Path
+from datetime import datetime, timedelta
 
 import ee
 
@@ -30,6 +27,7 @@ _initialized = False
 # =============================
 def ensure_ee_initialized() -> None:
     global _initialized
+
     if _initialized:
         return
 
@@ -57,7 +55,7 @@ def ensure_ee_initialized() -> None:
         _initialized = True
         logger.info(f"✅ Earth Engine initialized for project: {project}")
 
-    except Exception as e:
+    except Exception:
         logger.exception("❌ Failed to initialize Earth Engine")
         raise
 
@@ -77,8 +75,22 @@ def detect_vegetation_loss_zones(
     point = ee.Geometry.Point([lon, lat])
     aoi = point.buffer(float(settings.gee_buffer_meters))
 
-    # ✅ Use UPDATED dataset (IMPORTANT)
+    # ✅ Latest dataset
     collection_id = "COPERNICUS/S2_SR_HARMONIZED"
+
+    # =============================
+    # 📅 🔥 DYNAMIC DATE LOGIC
+    # =============================
+    today = datetime.utcnow()
+
+    before_start = (today - timedelta(days=730)).strftime("%Y-%m-%d")
+    before_end = (today - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    after_start = (today - timedelta(days=60)).strftime("%Y-%m-%d")
+    after_end = today.strftime("%Y-%m-%d")
+
+    print(f"📅 BEFORE: {before_start} → {before_end}")
+    print(f"📅 AFTER : {after_start} → {after_end}")
 
     # =============================
     # 📅 BEFORE COLLECTION
@@ -86,7 +98,7 @@ def detect_vegetation_loss_zones(
     collection_before = (
         ee.ImageCollection(collection_id)
         .filterBounds(aoi)
-        .filterDate(settings.gee_before_start, settings.gee_before_end)
+        .filterDate(before_start, before_end)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
         .select(["B8", "B4"])
     )
@@ -97,21 +109,21 @@ def detect_vegetation_loss_zones(
     collection_after = (
         ee.ImageCollection(collection_id)
         .filterBounds(aoi)
-        .filterDate(settings.gee_after_start, settings.gee_after_end)
+        .filterDate(after_start, after_end)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
         .select(["B8", "B4"])
     )
 
     # =============================
-    # 🔍 DEBUG: CHECK DATA AVAILABILITY
+    # 🔍 DEBUG DATA CHECK
     # =============================
     before_size = collection_before.size().getInfo()
     after_size = collection_after.size().getInfo()
 
-    print(f"Before images: {before_size}")
-    print(f"After images: {after_size}")
+    print(f"🛰️ Before images: {before_size}")
+    print(f"🛰️ After images : {after_size}")
 
-    # 🚨 DEMO SAFE: HANDLE EMPTY DATA
+    # 🚨 Handle no data
     if before_size == 0 or after_size == 0:
         logger.warning("⚠️ No satellite data found")
 
@@ -135,7 +147,7 @@ def detect_vegetation_loss_zones(
     loss = ndvi_change.lt(-float(settings.gee_ndvi_drop_threshold)).rename("loss")
 
     # =============================
-    # 📊 REGION REDUCTION
+    # 📊 REGION ANALYSIS
     # =============================
     stats = loss.reduceRegion(
         reducer=ee.Reducer.mean(),
@@ -146,6 +158,8 @@ def detect_vegetation_loss_zones(
 
     info = stats.getInfo() or {}
     mean_loss = float(info.get("loss", 0) or 0)
+
+    print(f"🌿 Mean NDVI loss: {mean_loss}")
 
     # =============================
     # 🧠 DEBUG INFO
@@ -163,7 +177,7 @@ def detect_vegetation_loss_zones(
     zones: list[dict] = []
 
     # =============================
-    # 🚨 ZONE CREATION
+    # 🚨 AUTO ZONE CREATION
     # =============================
     if mean_loss >= float(settings.gee_loss_mean_threshold):
 
@@ -177,8 +191,10 @@ def detect_vegetation_loss_zones(
         )
 
         debug["change_detected"] = True
+        print("🚨 CHANGE DETECTED → ZONE CREATED")
 
     else:
         debug["change_detected"] = False
+        print("✅ No significant change")
 
     return zones, debug
