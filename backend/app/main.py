@@ -1,3 +1,5 @@
+import threading
+from app.services.background_worker import run_background_worker
 from fastapi import FastAPI
 from sqlalchemy import text
 
@@ -11,8 +13,9 @@ app.include_router(danger_zone_router)
 
 
 @app.on_event("startup")
-def on_startup() -> None:
-    Base.metadata.create_all(bind=engine)
+def start_background_worker():
+    thread = threading.Thread(target=run_background_worker, daemon=True)
+    thread.start()
 
 
 @app.get("/health")
